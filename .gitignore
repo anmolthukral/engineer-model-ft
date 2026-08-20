@@ -1,0 +1,15 @@
+# Large model binaries and build intermediates (regenerable, not source)
+*.gguf
+*.safetensors
+mlx_model/
+merged_model/
+qwen2.5-coder-1.5b-hf/
+qwen2.5-coder-1.5b-base.gguf
+llama.cpp/
+dataset/
+rag/_scratch/
+rag/corpus.jsonl
+__pycache__/
+*.pyc
+.venv/
+.worktrees/

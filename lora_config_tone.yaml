@@ -1,0 +1,14 @@
+model: ./mlx_model/base_model
+train: true
+data: ./dataset
+adapter_path: ./mlx_model/adapter_tone
+iters: 150
+learning_rate: 1.0e-5
+batch_size: 2
+num_layers: 16
+grad_checkpoint: true
+fine_tune_type: lora
+lora_parameters:
+  rank: 8
+  dropout: 0.0
+  scale: 4.0

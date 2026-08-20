@@ -1,12 +1,15 @@
-# Large model binaries and build intermediates (regenerable, not source)
+# Large model binaries and build intermediates (regenerable, not source).
+# No trailing slash: these are symlinks in worktrees (pointing back to the
+# main checkout's copies), and a trailing-slash pattern only matches real
+# directories in git, not symlinks — without this they'd show as untracked.
 *.gguf
 *.safetensors
-mlx_model/
-merged_model/
-qwen2.5-coder-1.5b-hf/
+mlx_model
+merged_model
+qwen2.5-coder-1.5b-hf
 qwen2.5-coder-1.5b-base.gguf
-llama.cpp/
-dataset/
+llama.cpp
+dataset
 rag/_scratch/
 rag/corpus.jsonl
 __pycache__/

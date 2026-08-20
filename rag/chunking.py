@@ -111,11 +111,18 @@ def chunk_markdown(markdown_text: str, source: str, file_path: str, tokenizer,
 
         if body_tokens > max_tokens:
             flush()  # oversized section starts its own chunk(s), don't merge with buffer
-            for piece in _split_oversized(body, tokenizer, max_tokens):
+            pieces = _split_oversized(body, tokenizer, max_tokens)
+            for i, piece in enumerate(pieces):
+                # Append part index only if this section was split into multiple pieces
+                if len(pieces) > 1:
+                    part_trail = f"{trail or '(untitled)'} (part {i+1}/{len(pieces)})"
+                else:
+                    part_trail = trail or "(untitled)"
+
                 chunks.append({
                     "source": source,
                     "file_path": file_path,
-                    "heading_trail": trail or "(untitled)",
+                    "heading_trail": part_trail,
                     "content": piece.strip(),
                     "token_count": len(tokenizer.encode(piece)),
                 })

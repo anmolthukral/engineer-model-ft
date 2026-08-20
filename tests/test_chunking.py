@@ -68,3 +68,24 @@ def test_heading_trail_reflects_nesting():
     trails = [c["heading_trail"] for c in chunks]
     # At least one chunk should carry a nested trail like "Examples > Flattening one level"
     assert any(">" in t for t in trails)
+
+
+def test_multipiece_splits_get_distinct_trailing_indices():
+    """Verify that when a single oversized section splits into multiple pieces,
+    each piece gets a unique heading_trail (with part index) to avoid collisions
+    in downstream UNIQUE(source, file_path, heading_trail) constraints."""
+    long_section = "# Big Section\n\n" + " ".join(f"word{i}" for i in range(500))
+    chunks = chunk_markdown(long_section, source="mdn", file_path="big.md",
+                             tokenizer=FakeTokenizer(), min_tokens=1, max_tokens=100)
+
+    # Must have multiple chunks from the split
+    assert len(chunks) > 1
+
+    # All chunks from this section must have distinct heading_trail values
+    trails = [c["heading_trail"] for c in chunks]
+    assert len(trails) == len(set(trails)), f"Duplicate heading_trail values: {trails}"
+
+    # Each trail should indicate its part number (except if only one piece)
+    for trail in trails:
+        assert "part" in trail.lower() or len(chunks) == 1, \
+            f"Expected part number in trail '{trail}' for multi-piece split"

@@ -1,66 +1,112 @@
 #!/usr/bin/env python3
-"""Read rag/corpus.jsonl, chunk each document, embed each chunk via
-Ollama's local nomic-embed-text model, and store into pgvector. Uses
-ON CONFLICT DO NOTHING against the (source, file_path, heading_trail)
-unique constraint so re-running after an interruption is safe."""
-import json
+"""RAG ingestion pipeline for Engineer Playbook content.
+
+Reads markdown/MDX files from configured source directories,
+chunks with heading hierarchy preserved, generates embeddings,
+and stores in PostgreSQL with pgvector.
+
+Usage:
+    python -m rag.ingest                    # Run full ingestion
+    python -m rag.ingest --source blogs     # Ingest only blogs
+    python -m rag.ingest --dry-run          # Show what would be processed
+"""
+import argparse
 import sys
 from pathlib import Path
 
-import requests
-from transformers import AutoTokenizer
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rag.chunking import chunk_markdown
-from rag.db import get_connection
 
-CORPUS_FILE = Path("./rag/corpus.jsonl")
-OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
-EMBED_MODEL = "nomic-embed-text"
+from chunker import chunk_markdown, read_markdown_files
+from db import get_dsn, init_db, insert_chunks, get_stats
+from embedder import get_embedder
 
 
-def embed(text: str) -> list[float]:
-    resp = requests.post(OLLAMA_EMBED_URL, json={"model": EMBED_MODEL, "input": text})
-    resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+DEFAULT_SOURCES = [
+    Path("/Users/anmolthukral/projects/megamind/tutorials/app"),
+    Path("/Users/anmolthukral/projects/megamind/tutorials/src"),
+    Path("/Users/anmolthukral/projects/megamind/blogs/content"),
+]
 
 
-def main():
-    tokenizer = AutoTokenizer.from_pretrained("./mlx_model/base_model")
-    conn = get_connection()
-    cur = conn.cursor()
+def ingest(sources: list[Path], dry_run: bool = False) -> None:
+    """Run the ingestion pipeline."""
+    print(f"Connecting to database: {get_dsn()}")
+    embedder = get_embedder()
+    print(f"Using embedder: {embedder.__class__.__name__} (dim={embedder.dimension})")
 
-    total_docs, total_chunks, inserted = 0, 0, 0
-    with open(CORPUS_FILE) as f:
-        for line in f:
-            doc = json.loads(line)
-            total_docs += 1
+    if not dry_run:
+        init_db(embedder)
+        print("Database schema initialized")
+
+    documents = read_markdown_files(sources)
+    print(f"Found {len(documents)} markdown files")
+
+    if dry_run:
+        for doc in documents:
             chunks = chunk_markdown(
-                doc["raw_markdown"], source=doc["source"], file_path=doc["file_path"],
-                tokenizer=tokenizer, min_tokens=400, max_tokens=700,
+                doc["raw_markdown"],
+                source=doc["source"],
+                file_path=doc["file_path"],
             )
-            for chunk in chunks:
-                total_chunks += 1
-                vector = embed(chunk["content"])
-                cur.execute(
-                    """
-                    INSERT INTO chunks (source, file_path, heading_trail, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (source, file_path, heading_trail) DO NOTHING
-                    """,
-                    (chunk["source"], chunk["file_path"], chunk["heading_trail"],
-                     chunk["content"], vector),
-                )
-                if cur.rowcount > 0:
-                    inserted += 1
-            if total_docs % 200 == 0:
-                conn.commit()
-                print(f"  ...{total_docs} docs processed, {inserted} chunks inserted so far")
+            print(f"  {doc['source']}/{doc['file_path']}: {len(chunks)} chunks")
+        return
 
-    conn.commit()
-    cur.close()
-    conn.close()
-    print(f"\nDone. {total_docs} documents -> {total_chunks} chunks -> {inserted} newly inserted rows.")
+    total_chunks = 0
+    total_inserted = 0
+
+    for i, doc in enumerate(documents, 1):
+        chunks = chunk_markdown(
+            doc["raw_markdown"],
+            source=doc["source"],
+            file_path=doc["file_path"],
+        )
+        inserted = insert_chunks(chunks, embedder)
+        total_chunks += len(chunks)
+        total_inserted += inserted
+
+        if i % 10 == 0 or i == len(documents):
+            print(f"  [{i}/{len(documents)}] {doc['source']}/{doc['file_path']}: "
+                  f"{len(chunks)} chunks, {inserted} new")
+
+    print(f"\nDone. {len(documents)} documents -> {total_chunks} chunks -> {total_inserted} newly inserted")
+
+    stats = get_stats()
+    print(f"Database: {stats['total_chunks']} total chunks, {stats['table_size']}")
+    for src, count in stats['by_source'].items():
+        print(f"  {src}: {count} chunks")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="RAG ingestion pipeline")
+    parser.add_argument(
+        "--source",
+        choices=["tutorials", "blogs", "all"],
+        default="all",
+        help="Which source to ingest (default: all)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be processed without writing to database",
+    )
+    parser.add_argument(
+        "--paths",
+        nargs="+",
+        type=Path,
+        help="Custom paths to ingest (overrides --source)",
+    )
+    args = parser.parse_args()
+
+    if args.paths:
+        sources = args.paths
+    elif args.source == "tutorials":
+        sources = DEFAULT_SOURCES[:2]
+    elif args.source == "blogs":
+        sources = DEFAULT_SOURCES[2:]
+    else:
+        sources = DEFAULT_SOURCES
+
+    ingest(sources, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
